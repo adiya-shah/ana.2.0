@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Опросник по Эдинбургской шкале</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f4f8; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); height: 90vh; overflow-y: auto; }
+    h1 { text-align: center; }
+    label { display: block; margin: 15px 0; }
+    button { margin-top: 20px; padding: 10px 20px; border: none; border-radius: 8px; background: #4CAF50; color: #fff; cursor: pointer; }
+    #message { text-align: center; color: #b00; font-weight: bold; margin-bottom: 20px; }
+    #result { margin-top: 20px; }
+    #historyChart { margin-top: 20px; }
+  </style>
+  <!-- SheetJS для Excel и Chart.js для графика -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Опросник по Эдинбургской шкале</h1>
+    <div id="message"></div>
+    <form id="surveyForm">
+      <label>Имя/ID:<br><input type="text" id="userId" required></label>
+      <div id="questions"></div>
+      <button type="submit" id="submitBtn">Отправить</button>
+    </form>
+
+    <div id="result" style="display:none">
+      <h2>Ваш результат: <span id="score"></span></h2>
+      <p>Уровень риска: <span id="level"></span></p>
+      <div id="advice"></div>
+      <canvas id="historyChart" width="400" height="200"></canvas><br>
+      <button id="downloadBtn">Скачать отчёт в Excel</button>
+    </div>
+  </div>
+
+  <script>
+    // Тексты 10 вопросов
+    const questionsList = [
+      "Я могла смеяться и видеть хорошее в жизни",
+      "Я спала хуже, чем обычно",
+      "Я могла заботиться о своем ребенке так же, как и другие женщины",
+      "Я испытывала приступы плача без явной причины",
+      "Я чувствовала беспокойство без видимой причины",
+      "Я могла расслабиться и отдохнуть",
+      "Я считала себя некомпетентной матерью",
+      "Я испытывала трудности с концентрацией внимания",
+      "Я чувствовала себя подавленной или безнадежной",
+      "Я думала о причинении вреда себе"
+    ];
+
+    // Генерация вопросов на странице
+    const container = document.getElementById('questions');
+    questionsList.forEach((text, idx) => {
+      const i = idx + 1;
+      const label = document.createElement('label');
+      label.innerHTML = `${i}. ${text}:<br>
+        <input type="radio" name="q${i}" value="0"> Почти всегда<br>
+        <input type="radio" name="q${i}" value="1"> Большую часть времени<br>
+        <input type="radio" name="q${i}" value="2"> Иногда<br>
+        <input type="radio" name="q${i}" value="3"> Почти никогда`;
+      container.appendChild(label);
+    });
+
+    // При загрузке проверяем последнюю дату
+    document.addEventListener('DOMContentLoaded', function() {
+      const history = JSON.parse(localStorage.getItem('testHistory') || '[]');
+      if (history.length) {
+        const lastDate = new Date(history[history.length - 1].date);
+        const now = new Date();
+        const diff = Math.floor((now - lastDate) / (1000*60*60*24));
+        if (diff < 7) {
+          document.getElementById('message').textContent =
+            `Ты уже проходила тест ${diff} дней назад. Повтори через ${7-diff} дней.`;
+          document.getElementById('surveyForm').style.display = 'none';
+        }
+      }
+    });
+
+    // Обработка отправки формы
+    document.getElementById('surveyForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      let total = 0;
+      for (let i = 1; i <= questionsList.length; i++) {
+        const selector = `input[name="q${i}"]:checked`;
+        const val = document.querySelector(selector);
+        if (!val) { alert(`Пожалуйста, ответьте на вопрос ${i}.`); return; }
+        total += parseInt(val.value);
+      }
+      const userId = document.getElementById('userId').value.trim();
+      if (!userId) { alert('Введите ваше имя/ID.'); return; }
+      let level = 'низкий';
+      if (total >= 10 && total < 13) level = 'умеренный';
+      else if (total >= 13) level = 'высокий';
+      const history = JSON.parse(localStorage.getItem('testHistory') || '[]');
+      const date = new Date().toISOString().split('T')[0];
+      history.push({ date, userId, score: total, level });
+      localStorage.setItem('testHistory', JSON.stringify(history));
+
+      // Показываем результат
+      document.getElementById('surveyForm').style.display = 'none';
+      document.getElementById('result').style.display = 'block';
+      document.getElementById('score').textContent = total;
+      document.getElementById('level').textContent = level;
+      let advice = '';
+      if (level === 'низкий') advice = 'У вас низкий риск. Продолжайте следить за собой и отдыхать.';
+      else if (level === 'умеренный') advice = 'Умеренный риск. Постарайтесь больше отдыхать и поговорить с близкими.';
+      else advice = 'Высокий риск. Рекомендуем обратиться к специалисту как можно скорее.';
+      document.getElementById('advice').textContent = advice;
+
+      // Рисуем график
+      const ctx = document.getElementById('historyChart').getContext('2d');
+      const labels = history.map(h => h.date);
+      const data = history.map(h => h.score);
+      if (window.myChart) window.myChart.destroy();
+      window.myChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Баллы', data, fill: false }] },
+        options: { scales: { y: { beginAtZero: true, max: 30 } } }
+      });
+    });
+
+    // Скачать отчёт в Excel
+    document.getElementById('downloadBtn').addEventListener('click', function() {
+      const history = JSON.parse(localStorage.getItem('testHistory') || '[]');
+      if (!history.length) { alert('Нет данных для отчёта.'); return; }
+      const report = [['Дата','UserID','Баллы','Уровень']];
+      history.forEach(h => report.push([h.date, h.userId, h.score, h.level]));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(report);
+      XLSX.utils.book_append_sheet(wb, ws, 'Отчет');
+      const analysis = [
+        ['Параметр','Значение'],
+        ['Средний балл', { f: `AVERAGE(Отчет!C2:C${history.length+1})`}],
+        ['Максимальный балл', { f: `MAX(Отчет!C2:C${history.length+1})`}],
+        ['% высокого риска', { f: `COUNTIF(Отчет!D2:D${history.length+1},"высокий")/${history.length}*100`}]
+      ];
+      const ws2 = XLSX.utils.aoa_to_sheet(analysis);
+      XLSX.utils.book_append_sheet(wb, ws2, 'Анализ');
+      XLSX.writeFile(wb, 'report.xlsx');
+    });
+  </script>
+</body>
+</html>
